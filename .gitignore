@@ -4,3 +4,4 @@ dbs/*
 mainRunner/*
 target
 out/*
+logs/*

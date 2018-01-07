@@ -5,13 +5,7 @@ import java.sql.{Connection, DriverManager}
 import com.dag.bo.{Feed, Language}
 
 class DataService(val path: String) {
-  // https://earldouglas.com/posts/scala-jdbc.html
-
-  // connect to the database named "mysql" on port 8889 of localhost
-  //val url = "jdbc:h2:file:./dbs/news"
   val url = "jdbc:h2:" + path
-  //"tcp://localhost:9092/c:/work/scala/news/dbs//news"
-  //jdbc:h2:tcp://localhost:9092//home/david/dbs/news
   val driver = "org.h2.Driver"
   val username = "sa"
   val password = ""
@@ -23,7 +17,6 @@ class DataService(val path: String) {
   } catch {
     case e: Exception => e.printStackTrace
   }
-  //connection.close
 
   def getLanguages: List[Language] = {
     val q = "SELECT id, iso_name, name FROM LANGUAGE"

@@ -53,41 +53,16 @@ object Job {
     */
 
     val pathData = params.get("pathDB", "tcp://localhost:9092/c:/work/scala/news/dbs/news")
-    var langs = new DataService(pathData).getLanguages //.filter(p=>p.name == "en") // TODO develop
-    /*
-        val x = env.addSource(new RSSSources("en", 30, pathData)).uid("en" + "-source")
-          .map(a => ("en", ("%04d%02d%02d" format(1900 + a.getDate.getYear, a.getDate.getMonth + 1, a.getDate.getDate)), a))
-          .keyBy(0, 1)
-          .window(TumblingEventTimeWindows.of(Time.minutes(60)))
-
-
-        x.apply[(String, String, TempNew)]((key, window: TimeWindow, input: Iterable[(String, String, TempNew)], out: Collector[(String, String, TempNew)]) => {
-          //input.foreach(a => out.collect(a))
-        })
-     var newss = langs
+    var langs = new DataService(pathData).getLanguages
+    var news = langs
       .filter(l => new DataService(pathData).getFeeds(l.name).size > 0)
       .map(l =>
-        env.addSource(new RSSSources(l.name, 30, pathData)).uid(l.name + "-source")
-          //.assignAscendingTimestamps(a=>a.getDate.getTime)
-          .assignTimestampsAndWatermarks(new TimeExtractorUtil(Time.days(1)))
-          .map(a => (l.name, ("%04d%02d%02d" format(1900 + a.getDate.getYear, a.getDate.getMonth + 1, a.getDate.getDate)), a))
-          .keyBy(0, 1)
-          .window(TumblingEventTimeWindows.of(Time.minutes(1)))
-          .apply[(String, String, TempNew)]((key: Tuple, window: TimeWindow, input: Iterable[(String, String, TempNew)], out: Collector[(String, String, TempNew)]) => { input.foreach(a => out.collect(a)) })
-          //.apply[(String, String, TempNew)](new WindowUtil())
-          //  .apply[(String, String, TempNew)](new WindowProcess())
-          .addSink(new FileSink).uid(l.name + "-sink")
-      )
-*/
-    var newss = langs
-      .filter(l => new DataService(pathData).getFeeds(l.name).size > 0)
-      .map(l =>
-        env.addSource(new RSSSources(l.name, 30, pathData)).name(l.name + "-source")
-          .map(a => (l.name, ("%04d%02d%02d" format(1900 + a.getDate.getYear, a.getDate.getMonth + 1, a.getDate.getDate)), a)).name(l.name + "-mapper")
+        env.addSource(new RSSSources(l.name, 30, pathData)).name(l.name+"-source")
+          .map(a => (l.name, ("%04d%02d%02d" format(1900 + a.getDate.getYear, a.getDate.getMonth + 1, a.getDate.getDate)), a)).name(l.name+"-mapper")
           .keyBy(0, 1)
           .timeWindow(Time.minutes(60))
-          .apply(new WindowProcess()).name(l.name + "-processor")
-          .addSink(new FileSink).name(l.name + "-sink")
+          .apply(new WindowProcess()).name(l.name+"-processor")
+          .addSink(new FileSink).name(l.name+"-sink")
       )
 
     env.execute("recover news");

@@ -78,7 +78,6 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
             if (position == 0) {
                 scala.collection.immutable.List<Feed> urls = dataService.getFeeds(lang); //.fil;
                 size = urls.size();
-                //size = 1; // TODO develop
                 if (size == 0) return;
 
                 IntStream.range(0, size).forEach(a -> {
@@ -86,7 +85,6 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
                 });
 
                 wait = ttl * 60L * 1000L / size;
-                //wait = 1000L; // TODO develop
             }
 
             String url = urlsToProcess.get(position).url();
