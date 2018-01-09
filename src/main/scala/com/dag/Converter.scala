@@ -8,23 +8,29 @@ object Hello extends App {
   val root = new File(args(0))
 
   def convert(src: File) = {
+    try {
+      val old = new File(src.getParent, src.getName + "old")
+      if (!old.exists()) {
+        src.renameTo(old)
+        val dst = new File(src.getParent, src.getName)
 
-    val old = new File (src.getParent, src.getName + "old")
-    src.renameTo(old)
-    val dst = new File(src.getParent, src.getName )
+        val dstW = new FileWriter(dst, false)
+        var already: Set[String] = Set()
 
-    val dstW = new FileWriter(dst, false)
-    var already: Set[String] = Set()
-
-    Source.fromFile(old, "utf-8").getLines().foreach((str: String) => {
-      if (!already.contains(str)) {
-        already += str;
-        dstW.write(str);
-        dstW.write("\n")
+        Source.fromFile(old, "utf-8").getLines().foreach((str: String) => {
+          if (!already.contains(str)) {
+            already += str;
+            dstW.write(str);
+            dstW.write("\n")
+          }
+        })
+        System.out.println(src + " -> " + dst)
+        dstW.close()
       }
-    })
-    System.out.println(src + " -> " + dst)
-    dstW.close()
+    } catch {
+      case e: Exception => e.printStackTrace()
+        System.out.println()
+    }
   }
 
   val languages = root.listFiles(new FilenameFilter {
