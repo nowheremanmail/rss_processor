@@ -3,6 +3,7 @@ package com.dag.source;
 import com.dag.DataService;
 import com.dag.bo.Feed;
 import com.dag.news.bo.TempNew;
+import com.dag.news.feeds.bing.BingReader;
 import com.rometools.rome.feed.synd.SyndCategory;
 import com.rometools.rome.feed.synd.SyndEntry;
 import com.rometools.rome.feed.synd.SyndFeed;
@@ -32,7 +33,6 @@ import java.security.cert.X509Certificate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
-import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -41,18 +41,45 @@ import java.util.stream.IntStream;
 public class RSSSources extends RichSourceFunction<TempNew> implements ListCheckpointed<Tuple3<String, LocalDateTime, LocalDateTime>> {
 
     static private Logger logger = LoggerFactory.getLogger(RSSSources.class);
+    static TrustStrategy trustStrategy = new TrustStrategy() {
 
-    private long ttl;
+        public boolean isTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            if (logger.isDebugEnabled()) {
+                for (X509Certificate cert : chain) {
+                    logger.debug("certification " + cert);
+                }
+            }
+            return true;
+        }
+
+    };
+    private  int ttl;
     private int timeout = 20000;
     private volatile boolean isRunning = true;
     private String lang;
     private DataService dataService;
     private String pathDB;
+    private String bingKey;
+    private Map<String, Tuple3<String, LocalDateTime, LocalDateTime>> currentInfo = new HashMap<>();
 
-    public RSSSources(String lang, int minutes, String dataPath) {
+    public RSSSources(String lang, int minutes, String dataPath, String bingKey) {
         this.lang = lang;
         ttl = minutes;
         pathDB = dataPath;
+        this.bingKey = bingKey;
+    }
+
+    static String extractGoogleLink(String url) {
+        if (url.startsWith("http://news.google") || url.startsWith("https://news.google")) {
+
+            Pattern pattern = Pattern.compile("(&?url=)([^&]+)");
+            Matcher matcher = pattern.matcher(url);
+            // check all occurance
+            if (matcher.find() && matcher.groupCount() == 2) {
+                url = matcher.group(2);
+            }
+        }
+        return url;
     }
 
     @Override
@@ -63,8 +90,6 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
         //ttl = parameters.getInteger("ttl", 30);
     }
 
-    private Map<String, Tuple3<String, LocalDateTime, LocalDateTime>> currentInfo = new HashMap<>();
-
     @Override
     public void run(SourceContext<TempNew> ctx) throws Exception {
         final Object lock = ctx.getCheckpointLock();
@@ -73,6 +98,9 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
 
         long wait = 1000L;
         int position = 0, size = 1;
+        int times2 = 60 / (int)ttl;
+        if (times2 <= 0) times2 = 1;
+        int count = 0;
 
         while (isRunning) {
             if (position == 0) {
@@ -188,6 +216,13 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
             } catch (InterruptedException ex) {
                 isRunning = false;
             }
+
+            count++;
+            if (count % times2 == 0) {
+                for (Iterator<TempNew> it = BingReader.iterator(bingKey, lang, 100); it.hasNext(); ) {
+                    ctx.collect(it.next());
+                }
+            }
         }
     }
 
@@ -195,34 +230,6 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
     public void cancel() {
         isRunning = false;
     }
-
-
-    static String extractGoogleLink(String url) {
-        if (url.startsWith("http://news.google") || url.startsWith("https://news.google")) {
-
-            Pattern pattern = Pattern.compile("(&?url=)([^&]+)");
-            Matcher matcher = pattern.matcher(url);
-            // check all occurance
-            if (matcher.find() && matcher.groupCount() == 2) {
-                url = matcher.group(2);
-            }
-        }
-        return url;
-    }
-
-
-    static TrustStrategy trustStrategy = new TrustStrategy() {
-
-        public boolean isTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-            if (logger.isDebugEnabled()) {
-                for (X509Certificate cert : chain) {
-                    logger.debug("certification " + cert);
-                }
-            }
-            return true;
-        }
-
-    };
 
     private SyndFeed readFeed(String url) throws Exception {
         SyndFeed feed = null;

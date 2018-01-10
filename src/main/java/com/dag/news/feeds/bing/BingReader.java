@@ -135,10 +135,13 @@ public class BingReader implements Iterator<TempNew> {
   */
 
     static public Stream<TempNew> find(String acctKey, String language, int bingReaderMax) {
-        return iteratorToFiniteStream(new BingReader(acctKey, language, bingReaderMax));
+        return iteratorToFiniteStream(iterator(acctKey, language, bingReaderMax));
+    }
+    static public Iterator<TempNew> iterator(String acctKey, String language, int bingReaderMax) {
+        return new BingReader(acctKey, language, bingReaderMax);
     }
 
     public static void main(String[] ar) {
-        BingReader.find("----key----", "es-es", 100).forEach((a) -> System.out.println(a.getLink()));
+        BingReader.find(ar[0],"es-dfes", 100).forEach((a) -> System.out.println(a.getLink()));
     }
 }
