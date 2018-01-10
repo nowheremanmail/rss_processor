@@ -1,7 +1,7 @@
 package com.dag
 
 import com.dag.news.bo.TempNew
-import com.dag.source.RSSSources
+import com.dag.source.{BingSource, RSSSources}
 import com.dag.utils.{TimeExtractorUtil, WindowUtil}
 import org.apache.flink.api.common.restartstrategy.RestartStrategies
 import org.apache.flink.api.java.tuple.Tuple
@@ -10,7 +10,7 @@ import org.apache.flink.api.scala._
 import org.apache.flink.runtime.state.filesystem.FsStateBackend
 import org.apache.flink.streaming.api.CheckpointingMode
 import org.apache.flink.streaming.api.environment.CheckpointConfig.ExternalizedCheckpointCleanup
-import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
+import org.apache.flink.streaming.api.scala.{DataStream, StreamExecutionEnvironment}
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows
 import org.apache.flink.streaming.api.windowing.time.Time
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow
@@ -52,18 +52,24 @@ object Job {
         env.getCheckpointConfig.setMaxConcurrentCheckpoints(1)
     */
 
+    val bingKey = params.get("bingKey")
+
+    def consumeFrom(dataStream: DataStream[TempNew], name: String) = dataStream.map(a => (name, ("%04d%02d%02d" format(1900 + a.getDate.getYear, a.getDate.getMonth + 1, a.getDate.getDate)), a)).name(name + "-mapper")
+      .keyBy(0, 1)
+      .timeWindow(Time.minutes(60))
+      .apply(new WindowProcess()).name(name + "-processor")
+      .addSink(new FileSink).name(name + "-sink")
+
     val pathData = params.get("pathDB", "tcp://localhost:9092/c:/work/scala/news/dbs/news")
-    var langs = new DataService(pathData).getLanguages
-    var news = langs
-      .filter(l => new DataService(pathData).getFeeds(l.name).size > 0)
-      .map(l =>
-        env.addSource(new RSSSources(l.name, 30, pathData)).name(l.name+"-source")
-          .map(a => (l.name, ("%04d%02d%02d" format(1900 + a.getDate.getYear, a.getDate.getMonth + 1, a.getDate.getDate)), a)).name(l.name+"-mapper")
-          .keyBy(0, 1)
-          .timeWindow(Time.minutes(60))
-          .apply(new WindowProcess()).name(l.name+"-processor")
-          .addSink(new FileSink).name(l.name+"-sink")
-      )
+    var langs = new DataService(pathData).getLanguages.filter(l => new DataService(pathData).getFeeds(l.name).size > 0)
+
+    var news = langs.map(l =>
+      consumeFrom(env.addSource(new RSSSources(l.name, 30, pathData)).name(l.name + "-source"), l.name)
+    )
+
+    var bing = langs.map(l =>
+      consumeFrom(env.addSource(new BingSource(bingKey, l.name, 100, 60)).name("b" + l.name + "-source"), "b" + l.name)
+    )
 
     env.execute("recover news");
 

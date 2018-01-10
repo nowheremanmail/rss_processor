@@ -1,7 +1,6 @@
 package com.dag
 
 import java.io.{File, FileReader, FileWriter, FilenameFilter}
-
 import scala.io.Source
 
 object Hello extends App {
