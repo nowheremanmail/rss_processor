@@ -77,9 +77,9 @@ public class BingReader implements Iterator<TempNew> {
 //freshness=Day
             String urlTxt;
             if (skip <= 0)
-                urlTxt = HOST + URL + "?q=&mkt=" + language + "&safeSearch=Off&count=" + bingReaderMax;
+                urlTxt = HOST + URL + "?q=+&mkt=" + language + "&safeSearch=Off&count=" + bingReaderMax;
             else
-                urlTxt = HOST + URL + "?q=&mkt=" + language + "&offset=" + skip;
+                urlTxt = HOST + URL + "?q=+&mkt=" + language + "&offset=" + skip;
 
             URL url = new URL(urlTxt);
 
@@ -142,6 +142,6 @@ public class BingReader implements Iterator<TempNew> {
     }
 
     public static void main(String[] ar) {
-        BingReader.find(ar[0],"es-dfes", 100).forEach((a) -> System.out.println(a.getLink()));
+        BingReader.find(ar[0],"es-es", 100).forEach((a) -> System.out.println(a.getTitle() + " " + a.getLink()));
     }
 }
