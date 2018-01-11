@@ -9,6 +9,7 @@ import java.util.*;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
+import com.dag.DataService;
 import com.dag.news.bo.TempNew;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -29,7 +30,9 @@ public class BingReader implements Iterator<TempNew> {
     private String acctKey;
     private String langauge;
 
-    public BingReader(String acctKey, String language, int bingReaderMax) {
+    private DataService dataService;
+
+    public BingReader(DataService dataService, String acctKey, String language, int bingReaderMax) {
         this.bingReaderMax = bingReaderMax;
         this.acctKey = acctKey;
         this.langauge = language;
@@ -37,6 +40,7 @@ public class BingReader implements Iterator<TempNew> {
         sdfs.setTimeZone(TimeZone.getTimeZone("UTC"));
         sdt.setTimeZone(TimeZone.getTimeZone("UTC"));
         mapper = new ObjectMapper();
+        this.dataService = dataService;
     }
 
     @Override
@@ -110,9 +114,11 @@ public class BingReader implements Iterator<TempNew> {
                     logger.error("error processing item " + item.toString(), ex);
                 }
             }
+            dataService.update("bing-"+langauge,  "");
         } catch (Exception ex) {
             // feed.setDisabled ( true );
             logger.error("error processing bing ", ex);
+            dataService.update("bing-"+langauge,  ex.getMessage());
             return null;
         } finally {
             try {
@@ -134,14 +140,10 @@ public class BingReader implements Iterator<TempNew> {
     }
   */
 
-    static public Stream<TempNew> find(String acctKey, String language, int bingReaderMax) {
-        return iteratorToFiniteStream(iterator(acctKey, language, bingReaderMax));
+    static public Stream<TempNew> find(DataService dataService, String acctKey, String language, int bingReaderMax) {
+        return iteratorToFiniteStream(iterator(dataService, acctKey, language, bingReaderMax));
     }
-    static public Iterator<TempNew> iterator(String acctKey, String language, int bingReaderMax) {
-        return new BingReader(acctKey, language, bingReaderMax);
-    }
-
-    public static void main(String[] ar) {
-        BingReader.find(ar[0],"es-es", 100).forEach((a) -> System.out.println(a.getTitle() + " " + a.getLink()));
+    static public Iterator<TempNew> iterator(DataService dataService, String acctKey, String language, int bingReaderMax) {
+        return new BingReader(dataService, acctKey, language, bingReaderMax);
     }
 }
