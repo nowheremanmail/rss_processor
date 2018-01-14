@@ -1,8 +1,11 @@
 package com.dag.news.bo;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.util.Date;
 import java.util.List;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class TempNew {
     //private String source;
     private List<String> categories;
