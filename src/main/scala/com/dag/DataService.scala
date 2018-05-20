@@ -52,4 +52,21 @@ class DataService(val path: String) {
 
     _process(Nil)
   }
+
+  def updateInfo(f: Feed, msg: String) = {
+    val stmt = connection.prepareStatement("UPDATE feed SET error = ?, last_update=now(), rowver=rowver+1 where id = ?")
+    stmt.setString(1, msg)
+    stmt.setInt(2, f.id)
+    val res = stmt.executeUpdate()
+    stmt.close()
+  }
+
+  def update(f: String, msg: String) = {
+    val stmt = connection.prepareStatement("UPDATE feed SET error = ?, last_update=now(), rowver=rowver+1 where url = ?")
+    stmt.setString(1, msg)
+    stmt.setString(2, f)
+    val res = stmt.executeUpdate()
+    stmt.close()
+  }
+
 }

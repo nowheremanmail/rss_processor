@@ -2,23 +2,19 @@ package com.dag
 
 import com.dag.news.bo.TempNew
 import com.dag.source.RSSSources
-import com.dag.utils.{TimeExtractorUtil, WindowUtil}
-import org.apache.flink.api.common.restartstrategy.RestartStrategies
-import org.apache.flink.api.java.tuple.Tuple
 import org.apache.flink.api.java.utils.ParameterTool
 import org.apache.flink.api.scala._
-import org.apache.flink.runtime.state.filesystem.FsStateBackend
-import org.apache.flink.streaming.api.CheckpointingMode
-import org.apache.flink.streaming.api.environment.CheckpointConfig.ExternalizedCheckpointCleanup
-import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
-import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows
-import org.apache.flink.streaming.api.windowing.time.Time
-import org.apache.flink.streaming.api.windowing.windows.TimeWindow
-import org.apache.flink.util.Collector
 import org.apache.flink.streaming.api.TimeCharacteristic
-import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor
+import org.apache.flink.streaming.api.environment.CheckpointConfig.ExternalizedCheckpointCleanup
+import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks
+import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
+import org.apache.flink.streaming.api.watermark.Watermark
+import org.apache.flink.streaming.api.windowing.time.Time
+import org.slf4j.LoggerFactory
 
 object Job {
+  val LOG = LoggerFactory.getLogger("Job");
+
   def main(args: Array[String]) {
 
     val params = ParameterTool.fromArgs(args)
@@ -27,13 +23,14 @@ object Job {
     //env.getConfig.disableSysoutLogging
 
 
-    env.setStreamTimeCharacteristic(TimeCharacteristic.ProcessingTime)
+    //env.setStreamTimeCharacteristic(TimeCharacteristic.ProcessingTime)
     // alternatively:
     // env.setStreamTimeCharacteristic(TimeCharacteristic.IngestionTime);
-    // env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+
     if (false) {
       // make parameters available in the web interface
-      env.enableCheckpointing(1000L * 80 * 15)
+      env.enableCheckpointing(1000L * 60 * 15)
       env.getCheckpointConfig.enableExternalizedCheckpoints(ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION)
     }
     /*
@@ -52,18 +49,31 @@ object Job {
         env.getCheckpointConfig.setMaxConcurrentCheckpoints(1)
     */
 
-    val pathData = params.get("pathDB", "tcp://localhost:9092/c:/work/scala/news/dbs/news")
-    var langs = new DataService(pathData).getLanguages
-    var news = langs
-      .filter(l => new DataService(pathData).getFeeds(l.name).size > 0)
-      .map(l =>
-        env.addSource(new RSSSources(l.name, 30, pathData)).name(l.name+"-source")
-          .map(a => (l.name, ("%04d%02d%02d" format(1900 + a.getDate.getYear, a.getDate.getMonth + 1, a.getDate.getDate)), a)).name(l.name+"-mapper")
-          .keyBy(0, 1)
-          .timeWindow(Time.minutes(60))
-          .apply(new WindowProcess()).name(l.name+"-processor")
-          .addSink(new FileSink).name(l.name+"-sink")
-      )
+    val bingKey = params.get("bingKey")
+
+    val pathData = params.get("pathDB", "./dbs/news")
+
+    val ds = new DataService(pathData)
+
+    var sources = ds.getLanguages
+      .filter(l => ds.getFeeds(l.name).size > 0)
+      //.flatMap(l => ds.getFeeds(l.name))
+      .map(f => env
+      .addSource(new RSSSources(f.name, 30, pathData, bingKey)).uid("source-" + f.name)
+    ).reduce((a, b) => a.union(b))
+
+    sources.filter(f => f.getDate != null)//.uid("filter-" + f.name)
+      .assignTimestampsAndWatermarks(new AssignerWithPunctuatedWatermarks[TempNew](){
+      override def checkAndGetNextWatermark(lastElement: TempNew, extractedTimestamp: Long): Watermark = new Watermark(extractedTimestamp)
+
+      override def extractTimestamp(element: TempNew, previousElementTimestamp: Long): Long = element.getDate.getTime
+    })//.uid("watermark-" + f.name)
+      .keyBy("language", "day")
+      .timeWindow(Time.hours(1))
+      .allowedLateness(Time.hours(1))
+      .process(new WindowProcess())//.uid("process-" + f.name)
+      .addSink(new FileSink)//.uid("sink-" + f.name)
+
 
     env.execute("recover news");
 

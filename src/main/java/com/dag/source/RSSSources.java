@@ -3,6 +3,7 @@ package com.dag.source;
 import com.dag.DataService;
 import com.dag.bo.Feed;
 import com.dag.news.bo.TempNew;
+import com.dag.news.feeds.bing.BingReader;
 import com.rometools.rome.feed.synd.SyndCategory;
 import com.rometools.rome.feed.synd.SyndEntry;
 import com.rometools.rome.feed.synd.SyndFeed;
@@ -29,10 +30,10 @@ import javax.net.ssl.SSLContext;
 import java.io.IOException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
-import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -41,18 +42,45 @@ import java.util.stream.IntStream;
 public class RSSSources extends RichSourceFunction<TempNew> implements ListCheckpointed<Tuple3<String, LocalDateTime, LocalDateTime>> {
 
     static private Logger logger = LoggerFactory.getLogger(RSSSources.class);
+    static TrustStrategy trustStrategy = new TrustStrategy() {
 
-    private long ttl;
+        public boolean isTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            if (logger.isDebugEnabled()) {
+                for (X509Certificate cert : chain) {
+                    logger.debug("certification " + cert);
+                }
+            }
+            return true;
+        }
+
+    };
+    private int ttl;
     private int timeout = 20000;
     private volatile boolean isRunning = true;
     private String lang;
     private DataService dataService;
     private String pathDB;
+    private String bingKey;
+    private Map<String, Tuple3<String, LocalDateTime, LocalDateTime>> currentInfo = new HashMap<>();
 
-    public RSSSources(String lang, int minutes, String dataPath) {
+    public RSSSources(String lang, int minutes, String dataPath, String bingKey) {
         this.lang = lang;
         ttl = minutes;
         pathDB = dataPath;
+        this.bingKey = bingKey;
+    }
+
+    static String extractGoogleLink(String url) {
+        if (url.startsWith("http://news.google") || url.startsWith("https://news.google")) {
+
+            Pattern pattern = Pattern.compile("(&?url=)([^&]+)");
+            Matcher matcher = pattern.matcher(url);
+            // check all occurance
+            if (matcher.find() && matcher.groupCount() == 2) {
+                url = matcher.group(2);
+            }
+        }
+        return url;
     }
 
     @Override
@@ -63,8 +91,6 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
         //ttl = parameters.getInteger("ttl", 30);
     }
 
-    private Map<String, Tuple3<String, LocalDateTime, LocalDateTime>> currentInfo = new HashMap<>();
-
     @Override
     public void run(SourceContext<TempNew> ctx) throws Exception {
         final Object lock = ctx.getCheckpointLock();
@@ -73,6 +99,9 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
 
         long wait = 1000L;
         int position = 0, size = 1;
+        int times2 = 60 / (int) ttl;
+        if (times2 <= 0) times2 = 1;
+        int count = 0;
 
         while (isRunning) {
             if (position == 0) {
@@ -88,99 +117,116 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
             }
 
             String url = urlsToProcess.get(position).url();
-            //String lang = urlsToProcess.get(position).language();
-            boolean needToAdd = false;
-
-            Tuple3<String, LocalDateTime, LocalDateTime> currentTuple = currentInfo.get(url);
-            if (currentTuple == null) {
-                currentTuple = new Tuple3<>(url, null, null);
-                needToAdd = true;
-            }
-
-            LocalDateTime lastStoredDate = currentTuple.getField(1);
-            LocalDateTime lastFoundDate = currentTuple.getField(2);
-
-            SyndFeed feed = null;
-            try {
-
-                logger.info("[" + url + "] reading ");
-                feed = readFeed(url);
-
-                if (feed != null && feed.getEntries() != null) {
-
-                    List<String> categoriesFeed = new ArrayList<String>();
-                    for (SyndCategory cat : feed.getCategories()) {
-                        String tax = cat.getTaxonomyUri();
-                        if (tax == null)
-                            tax = "";
-                        else
-                            tax = ":" + tax;
-                        categoriesFeed.add(cat.getName() + tax);
+            if (url.startsWith("bing-")) {
+                count++;
+                if (count % times2 == 0) {
+                    for (Iterator<TempNew> it = BingReader.iterator(dataService, bingKey, lang, 100); it.hasNext(); ) {
+                        ctx.collect(it.next());
                     }
+                }
+            } else {
+                //String lang = urlsToProcess.get(position).language();
+                boolean needToAdd = false;
 
-                    Date _feedPublishDate = feed.getPublishedDate();
-                    LocalDateTime feedPublishedDate = _feedPublishDate != null ? LocalDateTime.ofInstant(_feedPublishDate.toInstant(), ZoneId.of("UTC")) : null;
-
-                    if (lastStoredDate == null || feedPublishedDate.isAfter(lastStoredDate)) {
-                        LocalDateTime newestPubDate = null;
-                        for (SyndEntry entry : feed.getEntries()) {
-                            LocalDateTime entryPublishedDate = null;
-                            Date d = entry.getPublishedDate();
-                            if (d == null) {
-                                d = entry.getUpdatedDate();
-                            }
-
-                            if (d == null) {
-                                logger.info("[" + url + "] ignoring new because has no date");
-                                continue;
-                            }
-
-                            entryPublishedDate = LocalDateTime.ofInstant(d.toInstant(), ZoneId.of("UTC"));
-
-                            if (entry.getTitle() != null && entry.getLink() != null &&
-                                    (lastFoundDate == null || lastFoundDate.isBefore(entryPublishedDate))) {
-
-                                List<String> categoriesNew = new ArrayList<String>(categoriesFeed);
-                                for (SyndCategory cat : entry.getCategories()) {
-                                    String tax = cat.getTaxonomyUri();
-                                    if (tax == null)
-                                        tax = "";
-                                    else
-                                        tax = ":" + tax;
-                                    if (!categoriesNew.contains(cat.getName() + tax)) {
-                                        categoriesNew.add(cat.getName() + tax);
-                                    }
-                                }
-
-                                ctx.collect(new TempNew(entry.getTitle().trim(), entry.getDescription() != null ? entry.getDescription().getValue().trim() : "", extractGoogleLink(entry.getLink()), d, categoriesNew));
-                            }
-
-                            if (newestPubDate == null) {
-                                newestPubDate = entryPublishedDate;
-                            } else if (newestPubDate.isBefore(entryPublishedDate)) {
-                                newestPubDate = entryPublishedDate;
-                            }
-                        }
-
-                        synchronized (lock) {
-                            currentTuple.setField(feedPublishedDate, 1);
-                            currentTuple.setField(newestPubDate, 2);
-
-                            if (needToAdd)
-                                currentInfo.put(url, currentTuple);
-                        }
-                    } else {
-                        logger.info("[" + url + "] ignoring feed, data not updated " + lastStoredDate + " " + feedPublishedDate);
-                    }
-
-                } else {
-                    logger.info("[" + url + "] ignoring feed, no items");
+                Tuple3<String, LocalDateTime, LocalDateTime> currentTuple = currentInfo.get(url);
+                if (currentTuple == null) {
+                    currentTuple = new Tuple3<>(url, null, null);
+                    needToAdd = true;
                 }
 
-            } catch (Exception ex) {
-                logger.error("[" + url + "] fails ", ex);
-            }
+                LocalDateTime lastStoredDate = currentTuple.getField(1);
+                LocalDateTime lastFoundDate = currentTuple.getField(2);
 
+                SyndFeed feed = null;
+                try {
+
+                    logger.info("[" + url + "] reading ");
+                    feed = readFeed(url);
+
+                    if (feed != null && feed.getEntries() != null) {
+
+                        List<String> categoriesFeed = new ArrayList<String>();
+                        for (SyndCategory cat : feed.getCategories()) {
+                            String tax = cat.getTaxonomyUri();
+                            if (tax == null)
+                                tax = "";
+                            else
+                                tax = ":" + tax;
+                            categoriesFeed.add(cat.getName() + tax);
+                        }
+
+                        Date _feedPublishDate = feed.getPublishedDate();
+                        LocalDateTime feedPublishedDate = _feedPublishDate != null ? LocalDateTime.ofInstant(_feedPublishDate.toInstant(), ZoneId.of("UTC")) : null;
+
+                        if (lastStoredDate == null || feedPublishedDate.isAfter(lastStoredDate)) {
+                            LocalDateTime newestPubDate = null;
+
+                            for (SyndEntry entry : feed.getEntries()) {
+                                LocalDateTime entryPublishedDate = null;
+                                Date d = entry.getPublishedDate();
+                                if (d == null) {
+                                    d = entry.getUpdatedDate();
+                                }
+
+                                if (d == null ) {
+                                    logger.info("[" + url + "] ignoring news because has no date");
+                                    continue;
+                                }
+
+                                if (d.compareTo(Calendar.getInstance().getTime()) > 0) {
+                                    d = _feedPublishDate;
+                                    logger.info("[" + url + "] ignoring news because has date on future " + (new SimpleDateFormat("yyyy-MM-dd HH:mm").format(d)));
+                                    continue;
+                                }
+
+                                entryPublishedDate = LocalDateTime.ofInstant(d.toInstant(), ZoneId.of("UTC"));
+
+                                if (entry.getTitle() != null && entry.getLink() != null &&
+                                        (lastFoundDate == null || lastFoundDate.isBefore(entryPublishedDate))) {
+
+                                    List<String> categoriesNew = new ArrayList<String>(categoriesFeed);
+                                    for (SyndCategory cat : entry.getCategories()) {
+                                        String tax = cat.getTaxonomyUri();
+                                        if (tax == null)
+                                            tax = "";
+                                        else
+                                            tax = ":" + tax;
+                                        if (!categoriesNew.contains(cat.getName() + tax)) {
+                                            categoriesNew.add(cat.getName() + tax);
+                                        }
+                                    }
+
+                                    ctx.collect(new TempNew(url, lang, entry.getTitle().trim(), entry.getDescription() != null ? entry.getDescription().getValue().trim() : "", extractGoogleLink(entry.getLink()), d, categoriesNew));
+                                }
+
+                                if (newestPubDate == null) {
+                                    newestPubDate = entryPublishedDate;
+                                } else if (newestPubDate.isBefore(entryPublishedDate)) {
+                                    newestPubDate = entryPublishedDate;
+                                }
+                            }
+
+                            synchronized (lock) {
+                                currentTuple.setField(feedPublishedDate, 1);
+                                currentTuple.setField(newestPubDate, 2);
+
+                                if (needToAdd)
+                                    currentInfo.put(url, currentTuple);
+                            }
+                        } else {
+                            logger.info("[" + url + "] ignoring feed, data not updated " + lastStoredDate + " " + feedPublishedDate);
+                        }
+
+                    } else {
+                        logger.info("[" + url + "] ignoring feed, no items");
+                    }
+
+                    dataService.updateInfo(urlsToProcess.get(position), "");
+                } catch (Exception ex) {
+                    logger.error("[" + url + "] fails ", ex);
+                    dataService.updateInfo(urlsToProcess.get(position), "Exception: " + ex.getMessage());
+                }
+            }
 
             position = (position + 1) % size;
             try {
@@ -188,6 +234,7 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
             } catch (InterruptedException ex) {
                 isRunning = false;
             }
+
         }
     }
 
@@ -195,34 +242,6 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
     public void cancel() {
         isRunning = false;
     }
-
-
-    static String extractGoogleLink(String url) {
-        if (url.startsWith("http://news.google") || url.startsWith("https://news.google")) {
-
-            Pattern pattern = Pattern.compile("(&?url=)([^&]+)");
-            Matcher matcher = pattern.matcher(url);
-            // check all occurance
-            if (matcher.find() && matcher.groupCount() == 2) {
-                url = matcher.group(2);
-            }
-        }
-        return url;
-    }
-
-
-    static TrustStrategy trustStrategy = new TrustStrategy() {
-
-        public boolean isTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-            if (logger.isDebugEnabled()) {
-                for (X509Certificate cert : chain) {
-                    logger.debug("certification " + cert);
-                }
-            }
-            return true;
-        }
-
-    };
 
     private SyndFeed readFeed(String url) throws Exception {
         SyndFeed feed = null;
@@ -274,6 +293,24 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
                 if (response.getStatusLine().getStatusCode() == 200) {
                     SyndFeedInput input = new SyndFeedInput();
                     feed = input.build(new XmlReader(response.getEntity().getContent()));
+
+
+                    feed.getEntries().sort(new Comparator<SyndEntry>() {
+                        @Override
+                        public int compare(SyndEntry o1, SyndEntry o2) {
+                            Date d1 = o1.getPublishedDate();
+                            if (d1 == null) {
+                                d1 = o1.getUpdatedDate();
+                            }
+                            Date d2 = o2.getPublishedDate();
+                            if (d2 == null) {
+                                d2 = o2.getUpdatedDate();
+                            }
+                            if (d1 == null || d2 == null) return o1.getTitle().compareTo(o2.getTitle());
+                            return d1.compareTo(d2);
+                        }
+                    });
+
                 } else {
                     throw new RuntimeException("network error [" + response.getStatusLine().getStatusCode() + "]");
                 }
@@ -302,5 +339,22 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
     public void restoreState(List<Tuple3<String, LocalDateTime, LocalDateTime>> state) throws Exception {
         currentInfo = state.stream().collect(Collectors.toMap(a -> a.f0, a -> a));
         logger.info("detected " + currentInfo.size() + " recovered urls");
+    }
+
+
+    public static void main(String[] a) {
+        RSSSources rs = new RSSSources("es", 11, "", "");
+
+        try {
+            SyndFeed fs = rs.readFeed("http://english.yonhapnews.co.kr/RSS/headline.xml");
+            fs.getEntries().forEach(b -> {
+
+                System.out.println(b.getPublishedDate());
+            });
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+
     }
 }
