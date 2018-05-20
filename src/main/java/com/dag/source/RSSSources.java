@@ -30,6 +30,7 @@ import javax.net.ssl.SSLContext;
 import java.io.IOException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
@@ -159,6 +160,7 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
 
                         if (lastStoredDate == null || feedPublishedDate.isAfter(lastStoredDate)) {
                             LocalDateTime newestPubDate = null;
+
                             for (SyndEntry entry : feed.getEntries()) {
                                 LocalDateTime entryPublishedDate = null;
                                 Date d = entry.getPublishedDate();
@@ -166,8 +168,14 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
                                     d = entry.getUpdatedDate();
                                 }
 
-                                if (d == null) {
-                                    logger.info("[" + url + "] ignoring new because has no date");
+                                if (d == null ) {
+                                    logger.info("[" + url + "] ignoring news because has no date");
+                                    continue;
+                                }
+
+                                if (d.compareTo(Calendar.getInstance().getTime()) > 0) {
+                                    d = _feedPublishDate;
+                                    logger.info("[" + url + "] ignoring news because has date on future " + (new SimpleDateFormat("yyyy-MM-dd HH:mm").format(d)));
                                     continue;
                                 }
 
@@ -188,7 +196,7 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
                                         }
                                     }
 
-                                    ctx.collect(new TempNew(entry.getTitle().trim(), entry.getDescription() != null ? entry.getDescription().getValue().trim() : "", extractGoogleLink(entry.getLink()), d, categoriesNew));
+                                    ctx.collect(new TempNew(url, lang, entry.getTitle().trim(), entry.getDescription() != null ? entry.getDescription().getValue().trim() : "", extractGoogleLink(entry.getLink()), d, categoriesNew));
                                 }
 
                                 if (newestPubDate == null) {
@@ -285,6 +293,24 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
                 if (response.getStatusLine().getStatusCode() == 200) {
                     SyndFeedInput input = new SyndFeedInput();
                     feed = input.build(new XmlReader(response.getEntity().getContent()));
+
+
+                    feed.getEntries().sort(new Comparator<SyndEntry>() {
+                        @Override
+                        public int compare(SyndEntry o1, SyndEntry o2) {
+                            Date d1 = o1.getPublishedDate();
+                            if (d1 == null) {
+                                d1 = o1.getUpdatedDate();
+                            }
+                            Date d2 = o2.getPublishedDate();
+                            if (d2 == null) {
+                                d2 = o2.getUpdatedDate();
+                            }
+                            if (d1 == null || d2 == null) return o1.getTitle().compareTo(o2.getTitle());
+                            return d1.compareTo(d2);
+                        }
+                    });
+
                 } else {
                     throw new RuntimeException("network error [" + response.getStatusLine().getStatusCode() + "]");
                 }
@@ -313,5 +339,22 @@ public class RSSSources extends RichSourceFunction<TempNew> implements ListCheck
     public void restoreState(List<Tuple3<String, LocalDateTime, LocalDateTime>> state) throws Exception {
         currentInfo = state.stream().collect(Collectors.toMap(a -> a.f0, a -> a));
         logger.info("detected " + currentInfo.size() + " recovered urls");
+    }
+
+
+    public static void main(String[] a) {
+        RSSSources rs = new RSSSources("es", 11, "", "");
+
+        try {
+            SyndFeed fs = rs.readFeed("http://english.yonhapnews.co.kr/RSS/headline.xml");
+            fs.getEntries().forEach(b -> {
+
+                System.out.println(b.getPublishedDate());
+            });
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+
     }
 }

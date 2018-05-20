@@ -4,12 +4,17 @@ import com.dag.news.bo.TempNew
 import com.dag.source.RSSSources
 import org.apache.flink.api.java.utils.ParameterTool
 import org.apache.flink.api.scala._
-import org.apache.flink.streaming.api.environment.CheckpointConfig.ExternalizedCheckpointCleanup
-import org.apache.flink.streaming.api.scala.{DataStream, StreamExecutionEnvironment}
-import org.apache.flink.streaming.api.windowing.time.Time
 import org.apache.flink.streaming.api.TimeCharacteristic
+import org.apache.flink.streaming.api.environment.CheckpointConfig.ExternalizedCheckpointCleanup
+import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks
+import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
+import org.apache.flink.streaming.api.watermark.Watermark
+import org.apache.flink.streaming.api.windowing.time.Time
+import org.slf4j.LoggerFactory
 
 object Job {
+  val LOG = LoggerFactory.getLogger("Job");
+
   def main(args: Array[String]) {
 
     val params = ParameterTool.fromArgs(args)
@@ -18,13 +23,14 @@ object Job {
     //env.getConfig.disableSysoutLogging
 
 
-    env.setStreamTimeCharacteristic(TimeCharacteristic.ProcessingTime)
+    //env.setStreamTimeCharacteristic(TimeCharacteristic.ProcessingTime)
     // alternatively:
     // env.setStreamTimeCharacteristic(TimeCharacteristic.IngestionTime);
-    // env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+
     if (false) {
       // make parameters available in the web interface
-      env.enableCheckpointing(1000L * 80 * 15)
+      env.enableCheckpointing(1000L * 60 * 15)
       env.getCheckpointConfig.enableExternalizedCheckpoints(ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION)
     }
     /*
@@ -45,22 +51,29 @@ object Job {
 
     val bingKey = params.get("bingKey")
 
-    def consumeFrom(dataStream: DataStream[TempNew], name: String) = dataStream.map(a => (name, ("%04d%02d%02d" format(1900 + a.getDate.getYear, a.getDate.getMonth + 1, a.getDate.getDate)), a)).name(name + "-mapper")
-      .keyBy(0, 1)
-      .timeWindow(Time.minutes(60))
-      .apply(new WindowProcess()).name(name + "-processor")
-      .addSink(new FileSink).name(name + "-sink")
+    val pathData = params.get("pathDB", "./dbs/news")
 
-    val pathData = params.get("pathDB", "tcp://localhost:9092/c:/work/scala/news/dbs/news")
-    var langs = new DataService(pathData).getLanguages.filter(l => new DataService(pathData).getFeeds(l.name).size > 0)
+    val ds = new DataService(pathData)
 
-    var news = langs.map(l =>
-      consumeFrom(env.addSource(new RSSSources(l.name, 30, pathData, bingKey)).name(l.name + "-source"), l.name)
-    )
+    var sources = ds.getLanguages
+      .filter(l => ds.getFeeds(l.name).size > 0)
+      //.flatMap(l => ds.getFeeds(l.name))
+      .map(f => env
+      .addSource(new RSSSources(f.name, 30, pathData, bingKey)).uid("source-" + f.name)
+    ).reduce((a, b) => a.union(b))
 
-/*    var bing = langs.map(l =>
-      consumeFrom(env.addSource(new BingSource(bingKey, l.name, 100, 60)).name("b" + l.name + "-source"), "b" + l.name)
-    )*/
+    sources.filter(f => f.getDate != null)//.uid("filter-" + f.name)
+      .assignTimestampsAndWatermarks(new AssignerWithPunctuatedWatermarks[TempNew](){
+      override def checkAndGetNextWatermark(lastElement: TempNew, extractedTimestamp: Long): Watermark = new Watermark(extractedTimestamp)
+
+      override def extractTimestamp(element: TempNew, previousElementTimestamp: Long): Long = element.getDate.getTime
+    })//.uid("watermark-" + f.name)
+      .keyBy("language", "day")
+      .timeWindow(Time.hours(1))
+      .allowedLateness(Time.hours(1))
+      .process(new WindowProcess())//.uid("process-" + f.name)
+      .addSink(new FileSink)//.uid("sink-" + f.name)
+
 
     env.execute("recover news");
 

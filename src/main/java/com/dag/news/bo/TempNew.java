@@ -1,19 +1,27 @@
 package com.dag.news.bo;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
+import java.io.Serializable;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class TempNew {
-    //private String source;
+public class TempNew implements Serializable {
+    @JsonIgnore
+    private String source;
+
     private List<String> categories;
     private String title;
     private String description;
     private String link;
+
     private Date date;
-    //private String language;
+
+    @JsonIgnore
+    private String language;
 
     public TempNew() {
     }
@@ -54,11 +62,29 @@ public class TempNew {
         return date;
     }
 
-    public void setDate(Date pubDate) {
-        this.date = pubDate;
+
+    public String getDay() {
+        return day;
     }
 
-    /*public String getLanguage() {
+
+    public void setDay(String day) {
+        this.day = day;
+    }
+
+    @JsonIgnore
+    private String day;
+
+    public void setDate(Date pubDate) {
+
+        this.date = pubDate;
+
+        SimpleDateFormat sdt = new SimpleDateFormat("yyyyMMdd");
+
+        day = sdt.format(pubDate);
+    }
+
+    public String getLanguage() {
         return language;
     }
 
@@ -72,16 +98,30 @@ public class TempNew {
 
     public void setSource(String source) {
         this.source = source;
-    }*/
+    }
 
-    public TempNew(String title, String description, String link, Date pubDate, List<String> categories) {
+    public TempNew(String source, String language, String title, String description, String link, Date pubDate, List<String> categories) {
         this.title = title;
         this.description = description;
         this.link = link;
-        this.date = pubDate;
-        //this.language = language;
-        //this.source = source;
+        this.setDate(pubDate);
+
+        this.language = language;
+        this.source = source;
         this.categories = categories;
     }
 
+    @Override
+    public String toString() {
+        return "TempNew{" +
+                "source='" + source + '\'' +
+                ", categories=" + categories +
+                ", title='" + title + '\'' +
+                ", description='" + description + '\'' +
+                ", link='" + link + '\'' +
+                ", date=" + date +
+                ", language='" + language + '\'' +
+                ", day='" + day + '\'' +
+                '}';
+    }
 }

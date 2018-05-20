@@ -109,7 +109,7 @@ public class BingReader implements Iterator<TempNew> {
                     } else {
                         dateItem = sdfs.parse(item.getDatePublished());
                     }
-                    result.add(new TempNew(item.getName().trim(), item.getDescription() != null ? item.getDescription().trim() : "", item.getUrl(), dateItem, new ArrayList<String>()));
+                    result.add(new TempNew("bing-" + language, language, item.getName().trim(), item.getDescription() != null ? item.getDescription().trim() : "", item.getUrl(), dateItem, new ArrayList<String>()));
                 } catch (Exception ex) {
                     logger.error("error processing item " + item.toString(), ex);
                 }

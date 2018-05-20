@@ -1,24 +1,24 @@
 resolvers in ThisBuild ++= Seq(
+  Resolver.mavenLocal,
+  //"Local Maven" at Path.userHome.asFile.toURI.toURL + ".m2/repository",
   "Apache Development Snapshot Repository" at "https://repository.apache.org/content/repositories/snapshots/",
-  "mvnrepostory" at "https://mvnrepository.com",
-  Resolver.mavenLocal
+  "mvnrepostory" at "https://mvnrepository.com"
 )
 
 name := "news"
 version := "0.1-SNAPSHOT"
 organization := "com.dag"
-scalaVersion in ThisBuild := "2.11.7"
+scalaVersion in ThisBuild := "2.11.8"
 
-val flinkVersion = "1.4.0"
+val flinkVersion = "1.4.2"
 
 libraryDependencies ++= Seq(
-  "com.rometools" % "rome" % "1.6.0" % "compile",
+  "com.rometools" % "rome" % "1.9.1-SNAPSHOT" % "compile",
   "org.apache.httpcomponents" % "httpclient" % "4.5" % "compile",
   "org.slf4j" % "slf4j-log4j12" % "1.7.6" % "compile",
   //  "log4j" % "log4j" % "1.2.17" % "compile",
   "com.h2database" % "h2" % "1.4.196" % "compile"
 )
-//excludeDependencies += "log4j" % "log4j"
 
 val flinkDependencies = Seq(
   "org.apache.flink" %% "flink-scala" % flinkVersion % "provided",
