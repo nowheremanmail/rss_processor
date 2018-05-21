@@ -5,3 +5,4 @@ mainRunner/*
 target
 out/*
 logs/*
+data/*
